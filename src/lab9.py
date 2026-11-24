@@ -1,58 +1,93 @@
-# -*- coding: utf-8 -*-
-
 """
-Інформаційний скрипт для Лабораторної роботи №9.
-
-Цей файл не запускає веб-додаток безпосередньо.
-Він надає інструкції, як запустити приклади для Flask та Django.
-
-Будь ласка, дотримуйтесь інструкцій нижче.
+Лабораторна робота № 9: Створення простого веб-додатку на Flask
+Варіант: 12 («Планувальник подорожей» / Travel Planner)
+Студент: Шульга Дмитро Ігорович
+Група: 12
 """
 
 import os
+import sqlite3
+from flask import Flask, render_template, request, redirect, url_for
 
-def print_instructions():
-    """
-    Виводить інструкції для запуску прикладів Flask та Django.
-    """
-    flask_example_path = "flask_example"
-    django_example_path = "django_example"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "travel_planner.db")
 
-    print("="*80)
-    print("Лабораторна робота № 9: Інструкції для запуску прикладів")
-    print("="*80)
-    print("\nЦей репозиторій містить два приклади веб-додатків: один на Flask, інший на Django.")
-    print("Ви можете знайти їх у відповідних директоріях.\n")
-
-    # --- Інструкції для Flask ---
-    print("-" * 30 + " Flask Example " + "-" * 31)
-    print(f"Приклад знаходиться в директорії: {flask_example_path}/\n")
-    print("Щоб запустити його, виконайте наступні команди з директорії 'src':\n")
-    print(f"1. Перейдіть до директорії з прикладом:")
-    print(f"   cd {flask_example_path}\n")
-    print(f"2. Запустіть додаток:")
-    print(f"   python app.py\n")
-    print("Після запуску, додаток буде доступний за адресою: http://127.0.0.1:5000\n")
-
-    # --- Інструкції для Django ---
-    print("-" * 30 + " Django Example " + "-" * 30)
-    print(f"Приклад знаходиться в директорії: {django_example_path}/\n")
-    print("Щоб запустити його, виконайте наступні команди з директорії 'src':\n")
-    print(f"1. Перейдіть до директорії з прикладом:")
-    print(f"   cd {django_example_path}\n")
-    print(f"2. Застосуйте міграції бази даних (це потрібно зробити один раз):")
-    print(f"   python manage.py migrate\n")
-    print(f"3. Запустіть сервер для розробки:")
-    print(f"   python manage.py runserver\n")
-    print("Після запуску, додаток буде доступний за адресою: http://127.0.0.1:8000\n")
-    print("="*80)
+app = Flask(__name__, template_folder=os.path.join(BASE_DIR, "templates"))
 
 
-if __name__ == '__main__':
-    # Перевіряємо, чи скрипт запускається з директорії `src`
-    current_dir = os.path.basename(os.getcwd())
-    if current_dir != 'src':
-        print(f"\n[ПОПЕРЕДЖЕННЯ] Будь ласка, запустіть цей скрипт з директорії 'src', щоб шляхи були правильними.")
-        print(f"Поточна директорія: {os.getcwd()}\n")
+def get_db_connection() -> sqlite3.Connection:
+    """Встановлює з'єднання з базою даних SQLite та налаштовує повернення рядків як словників."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-    print_instructions()
+
+def init_db() -> None:
+    """Створює таблицю trips у базі даних, якщо вона ще не існує."""
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trips (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                destination TEXT NOT NULL,
+                travel_date TEXT NOT NULL,
+                notes TEXT,
+                done INTEGER NOT NULL DEFAULT 0
+            );
+            """
+        )
+        conn.commit()
+
+
+@app.route("/")
+def index():
+    """Головна сторінка: відображення списку запланованих подорожей."""
+    with get_db_connection() as conn:
+        trips = conn.execute("SELECT * FROM trips ORDER BY done ASC, travel_date ASC;").fetchall()
+    return render_template("index.html", trips=trips)
+
+
+@app.route("/add", methods=["POST"])
+def add_trip():
+    """Додавання нової подорожі до бази даних через POST-форму."""
+    destination = request.form.get("destination", "").strip()
+    travel_date = request.form.get("travel_date", "").strip()
+    notes = request.form.get("notes", "").strip()
+
+    if destination and travel_date:
+        with get_db_connection() as conn:
+            conn.execute(
+                "INSERT INTO trips (destination, travel_date, notes, done) VALUES (?, ?, ?, 0);",
+                (destination, travel_date, notes),
+            )
+            conn.commit()
+
+    return redirect(url_for("index"))
+
+
+@app.route("/done/<int:trip_id>")
+def toggle_done(trip_id: int):
+    """Позначення подорожі як виконаної / відвіданої (або повернення в план)."""
+    with get_db_connection() as conn:
+        trip = conn.execute("SELECT done FROM trips WHERE id = ?;", (trip_id,)).fetchone()
+        if trip is not None:
+            new_status = 0 if trip["done"] else 1
+            conn.execute("UPDATE trips SET done = ? WHERE id = ?;", (new_status, trip_id))
+            conn.commit()
+
+    return redirect(url_for("index"))
+
+
+@app.route("/delete/<int:trip_id>")
+def delete_trip(trip_id: int):
+    """Видалення подорожі зі списку."""
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM trips WHERE id = ?;", (trip_id,))
+        conn.commit()
+
+    return redirect(url_for("index"))
+
+
+if __name__ == "__main__":
+    init_db()
+    app.run(debug=True)
